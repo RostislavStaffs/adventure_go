@@ -23,9 +23,15 @@ export default function LandingPage() {
         </div>
       </header>
 
-      <main className="content">
-       
-      </main>
+      <section className="hero">
+        <div className="hero-overlay">
+          <h1>
+            Turn every journey into a<br />story
+          </h1>
+          <p>Log Adventures, relive experiences and keep your memories sealed.</p>
+          <button className="cta">Get Started</button>
+        </div>
+      </section>
     </div>
   );
 }
