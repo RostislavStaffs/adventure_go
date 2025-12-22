@@ -154,11 +154,7 @@ export default function MainPage() {
   const [stepOverview, setStepOverview] = useState("");
   const [stepPhotos, setStepPhotos] = useState([]); // File[]
   const [stepExistingPhotos, setStepExistingPhotos] = useState([]); // base64 strings already saved
-  const [stepSpots, setStepSpots] = useState([
-    // placeholder demo (will be overwritten by real spots per step)
-    { id: "spot1", name: "Café de l’Acadèmia", note: "", photo: "", photon: null },
-    { id: "spot2", name: "Picasso Museum", note: "", photo: "", photon: null },
-  ]);
+  const [stepSpots, setStepSpots] = useState([]); // spots are empty unless user adds them
   const [stepError, setStepError] = useState("");
 
   // =========================
@@ -425,6 +421,7 @@ export default function MainPage() {
       setStepName(existingStep.title || "");
       setStepDate(normalizeYYYYMMDD(existingStep.date) || iso);
       setStepOverview(existingStep.overview || "");
+      // load existing spots and photos
       setStepSpots(Array.isArray(existingStep.spots) ? existingStep.spots : []);
       setStepExistingPhotos(Array.isArray(existingStep.photos) ? existingStep.photos : []);
       setStepPhotos([]);
@@ -434,11 +431,7 @@ export default function MainPage() {
       setStepOverview("");
       setStepPhotos([]);
       setStepExistingPhotos([]);
-
-      setStepSpots([
-        { id: "spot1", name: "Café de l’Acadèmia", note: "", photo: "", photon: null },
-        { id: "spot2", name: "Picasso Museum", note: "", photo: "", photon: null },
-      ]);
+      setStepSpots([]);
     }
 
     setShowAddStep(true);
@@ -632,8 +625,9 @@ export default function MainPage() {
       }
 
       const prevHasSame =
-        prev.some((p) => p?.photon?.osm_id && finalSpot?.photon?.osm_id && p.photon.osm_id === finalSpot.photon.osm_id) ||
-        prev.some((p) => (p?.name || "").toLowerCase() === (finalSpot?.name || "").toLowerCase());
+        prev.some(
+          (p) => p?.photon?.osm_id && finalSpot?.photon?.osm_id && p.photon.osm_id === finalSpot.photon.osm_id
+        ) || prev.some((p) => (p?.name || "").toLowerCase() === (finalSpot?.name || "").toLowerCase());
 
       if (prevHasSame) return prev;
       return [...prev, finalSpot];
@@ -930,8 +924,7 @@ export default function MainPage() {
 
             <div className="viewTrip-meta">
               <div className="viewTrip-sub">
-                {activeTrip.location} • {formatDateLabel(activeTrip.arrivalDate)} –{" "}
-                {formatDateLabel(activeTrip.departureDate)}
+                {activeTrip.location} • {formatDateLabel(activeTrip.arrivalDate)} – {formatDateLabel(activeTrip.departureDate)}
               </div>
               {activeTrip.summary && <div className="viewTrip-summary">{activeTrip.summary}</div>}
             </div>
@@ -1061,24 +1054,16 @@ export default function MainPage() {
                   </div>
                 ))}
 
-                {Array.from({ length: Math.max(0, 3 - (viewStep.spots?.length || 0)) }).map((_, i) => (
-                  <div key={`ph_${i}`} className="viewStep-highlightCard viewStep-highlightCardPh">
-                    <div className="viewStep-highlightName">No spot</div>
-                    <div className="viewStep-highlightQuote">“Add spots to see highlights here.”</div>
-                    <div className="viewStep-highlightImg">
-                      <div className="viewStep-highlightImgPh" />
-                    </div>
-                  </div>
-                ))}
+                {(!viewStep.spots || viewStep.spots.length === 0) && (
+                  <div style={{ opacity: 0.75, fontWeight: 800, padding: "10px 2px" }}>No spots yet.</div>
+                )}
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* =========================
-          ADD A STEP MODAL (UPDATED TO MATCH FIGMA)
-         ========================= */}
+      {/* step modals */}
       {showAddStep && stepTrip && (
         <div className="modal-overlay" role="dialog" aria-modal="true" onMouseDown={() => setShowAddStep(false)}>
           <div className="modal-card modal-step" onMouseDown={(e) => e.stopPropagation()}>
