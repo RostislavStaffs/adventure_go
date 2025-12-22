@@ -2,16 +2,17 @@ const express = require("express");
 const mongoose = require("mongoose");
 const cors = require("cors");
 const authRoutes = require("./routes/auth");
+const tripsRoutes = require("./routes/trips");
 
 
 const app = express();
 
 // middleware
 app.use(cors());
-
-
-app.use(express.json());
+app.use(express.json({ limit: "25mb" })); // to handle JSON payloads up to 25MB
+app.use(express.urlencoded({ extended: true, limit: "25mb" }));
 app.use("/api/auth", authRoutes);
+app.use("/api/trips", tripsRoutes);
 
 // connect to MongoDB
 mongoose

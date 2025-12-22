@@ -110,7 +110,7 @@ router.put("/me", requireAuth, async (req, res) => {
   } catch (err) {
     console.error(err);
 
-    // If email is duplicated, Mongo throws a duplicate key error
+    // email already in use
     if (err.code === 11000) {
       return res.status(409).json({ message: "Email already in use" });
     }

@@ -3,7 +3,9 @@ import "./main.css";
 import watermark from "./images/watermark.svg";
 import { Link } from "react-router-dom";
 
+const API_BASE = "http://localhost:4000";
 
+// ---------- helpers ----------
 function decodeJwt(token) {
   try {
     const payload = token.split(".")[1];
@@ -30,37 +32,73 @@ function daysBetweenInclusive(startYYYY, endYYYY) {
   const start = new Date(startYYYY + "T00:00:00");
   const end = new Date(endYYYY + "T00:00:00");
   const diff = Math.round((end - start) / (1000 * 60 * 60 * 24));
-  // inclusive days list
   return Array.from({ length: diff + 1 }, (_, i) => addDays(start, i));
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.onload = () => resolve(reader.result);
+    reader.readAsDataURL(file);
+  });
+}
+
+function toUiTrip(apiTrip) {
+  // API fields: destination, tripName, coverImage, _id etc.
+  return {
+    id: apiTrip._id,
+    title: apiTrip.tripName || "",
+    location: apiTrip.destination || "",
+    arrivalDate: apiTrip.arrivalDate || "",
+    departureDate: apiTrip.departureDate || "",
+    summary: apiTrip.summary || "",
+    image: apiTrip.coverImage || "",
+    createdAt: apiTrip.createdAt,
+    updatedAt: apiTrip.updatedAt,
+  };
 }
 
 export default function MainPage() {
   // auth state
   const [isLoggedIn, setIsLoggedIn] = useState(!!localStorage.getItem("token"));
 
-  // derive userId from token (so trips are per-user)
+  // userId from token
   const token = localStorage.getItem("token");
   const jwtPayload = useMemo(() => (token ? decodeJwt(token) : null), [token]);
   const userId = jwtPayload?.userId || "guest";
-  const tripsKey = `trips_${userId}`;
 
-  // store trips in state (loaded from localStorage)
+  // trips
   const [trips, setTrips] = useState([]);
 
-  // modal state
-  const [showAddTrip, setShowAddTrip] = useState(false);
-  const [showViewTrip, setShowViewTrip] = useState(false);
+  // modals
+  const [showTripForm, setShowTripForm] = useState(false); // Add/Edit modal
+  const [showViewTrip, setShowViewTrip] = useState(false); // View modal
   const [activeTrip, setActiveTrip] = useState(null);
 
-  // Add Trip form state
+  // delete confirm modal
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [tripToDelete, setTripToDelete] = useState(null);
+
+  // ---- Add/Edit mode ----
+  const [editingTripId, setEditingTripId] = useState(null); // null = create, otherwise edit
+
+  // form state
   const [destination, setDestination] = useState("");
   const [arrivalDate, setArrivalDate] = useState("");
   const [departureDate, setDepartureDate] = useState("");
   const [tripName, setTripName] = useState("");
   const [summary, setSummary] = useState("");
-  const [coverFile, setCoverFile] = useState(null);
+  const [coverFile, setCoverFile] = useState(null); // for new upload
+  const [coverPreview, setCoverPreview] = useState(""); // keeps existing image for edit
   const [formError, setFormError] = useState("");
 
+  const authHeaders = () => {
+    const t = localStorage.getItem("token");
+    return t ? { Authorization: `Bearer ${t}` } : {};
+  };
+
+  // keep navbar auth correct when navigating
   useEffect(() => {
     const syncAuth = () => setIsLoggedIn(!!localStorage.getItem("token"));
     window.addEventListener("storage", syncAuth);
@@ -71,34 +109,59 @@ export default function MainPage() {
     };
   }, []);
 
-  //  load trips whenever userId changes (login/logout)
+  // load trips from MongoDB whenever user changes (login/logout)
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(tripsKey) || "[]");
-      setTrips(saved);
-    } catch {
-      setTrips([]);
-    }
-  }, [tripsKey]);
+    const loadTrips = async () => {
+      const t = localStorage.getItem("token");
+      if (!t) {
+        setTrips([]);
+        return;
+      }
 
-  // persist trips
-  useEffect(() => {
-    localStorage.setItem(tripsKey, JSON.stringify(trips));
-  }, [trips, tripsKey]);
+      try {
+        const res = await fetch(`${API_BASE}/api/trips`, {
+          headers: {
+            ...authHeaders(),
+          },
+        });
 
-  // close modal on ESC
+        if (!res.ok) {
+          // token invalid/expired -> clear client state
+          if (res.status === 401) {
+            localStorage.removeItem("token");
+            setIsLoggedIn(false);
+            setTrips([]);
+            return;
+          }
+          throw new Error("Failed to load trips");
+        }
+
+        const data = await res.json();
+        setTrips(Array.isArray(data) ? data.map(toUiTrip) : []);
+      } catch (e) {
+        console.error(e);
+        setTrips([]);
+      }
+    };
+
+    loadTrips();
+  }, [userId]);
+
+  // ESC to close any modal
   useEffect(() => {
     const onKey = (e) => {
       if (e.key === "Escape") {
-        setShowAddTrip(false);
+        setShowTripForm(false);
         setShowViewTrip(false);
+        setShowDeleteConfirm(false);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  const openAddTrip = () => {
+  // ---------- helpers ----------
+  const resetTripForm = () => {
     setFormError("");
     setDestination("");
     setArrivalDate("");
@@ -106,10 +169,36 @@ export default function MainPage() {
     setTripName("");
     setSummary("");
     setCoverFile(null);
-    setShowAddTrip(true);
+    setCoverPreview("");
+    setEditingTripId(null);
   };
 
-  const createTrip = (e) => {
+  // OPEN: Add Trip
+  const openAddTrip = () => {
+    resetTripForm();
+    setShowTripForm(true);
+  };
+
+  // OPEN: Edit Trip (prefill form)
+  const openEditTrip = (trip) => {
+    setFormError("");
+    setEditingTripId(trip.id);
+
+    setDestination(trip.location || "");
+    setArrivalDate(trip.arrivalDate || "");
+    setDepartureDate(trip.departureDate || "");
+    setTripName(trip.title || "");
+    setSummary(trip.summary || "");
+
+    // keep existing image
+    setCoverFile(null);
+    setCoverPreview(trip.image || "");
+
+    setShowTripForm(true);
+  };
+
+  // CREATE/UPDATE Trip (MongoDB)
+  const submitTripForm = async (e) => {
     e.preventDefault();
     setFormError("");
 
@@ -119,29 +208,152 @@ export default function MainPage() {
     if (departureDate < arrivalDate)
       return setFormError("Departure date must be after arrival date.");
     if (!tripName.trim()) return setFormError("Please name your trip.");
-    if (!coverFile) return setFormError("Please upload a cover photo.");
 
-    const imageUrl = URL.createObjectURL(coverFile);
+    // For CREATE, require image. For EDIT, allow keeping old image.
+    let finalImage = coverPreview;
 
-    const newTrip = {
-      id: crypto.randomUUID(),
-      title: tripName.trim(),
-      location: destination.trim(),
+    try {
+      if (coverFile) {
+        finalImage = await fileToDataUrl(coverFile); // persists in MongoDB
+      }
+    } catch {
+      return setFormError("Could not read the image. Please try another file.");
+    }
+const submitTripForm = (e) => {
+  e.preventDefault();
+  setFormError("");
+
+  if (!destination.trim()) return setFormError("Please select a destination.");
+  if (!arrivalDate) return setFormError("Please select an arrival date.");
+  if (!departureDate) return setFormError("Please select a departure date.");
+  if (departureDate < arrivalDate)
+    return setFormError("Departure date must be after arrival date.");
+  if (!tripName.trim()) return setFormError("Please name your trip.");
+
+  
+  if (coverFile && coverFile.size > 2 * 1024 * 1024) {
+    setFormError("Image too large (max 2MB). Please choose a smaller one.");
+    return;
+  }
+}
+  // existing image logic continues below
+
+    if (!finalImage) return setFormError("Please upload a cover photo.");
+
+    const payload = {
+      destination: destination.trim(),
       arrivalDate,
       departureDate,
+      tripName: tripName.trim(),
       summary: summary.trim(),
-      image: imageUrl,
-      createdAt: new Date().toISOString(),
+      coverImage: finalImage,
     };
 
-    setTrips((prev) => [newTrip, ...prev]);
-    setShowAddTrip(false);
+    try {
+      const t = localStorage.getItem("token");
+      if (!t) return setFormError("You must be logged in.");
+
+      if (!editingTripId) {
+        // CREATE
+        const res = await fetch(`${API_BASE}/api/trips`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders(),
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          return setFormError(data?.message || "Failed to create trip.");
+        }
+
+        setTrips((prev) => [toUiTrip(data), ...prev]);
+      } else {
+        // UPDATE
+        const res = await fetch(`${API_BASE}/api/trips/${editingTripId}`, {
+          method: "PUT",
+          headers: {
+            "Content-Type": "application/json",
+            ...authHeaders(),
+          },
+          body: JSON.stringify(payload),
+        });
+
+        const data = await res.json().catch(() => null);
+
+        if (!res.ok) {
+          return setFormError(data?.message || "Failed to update trip.");
+        }
+
+        const updatedUiTrip = toUiTrip(data);
+
+        setTrips((prev) =>
+          prev.map((t) => (t.id === editingTripId ? updatedUiTrip : t))
+        );
+
+        // keep View modal in sync
+        if (activeTrip?.id === editingTripId) {
+          setActiveTrip(updatedUiTrip);
+        }
+      }
+
+      setShowTripForm(false);
+      resetTripForm();
+    } catch (err) {
+      console.error(err);
+      setFormError("Server not reachable (is backend running on :4000?)");
+    }
   };
 
+  // OPEN: View Trip
   const openViewTrip = (trip) => {
     setActiveTrip(trip);
     setShowViewTrip(true);
   };
+
+  // DELETE flow
+  const askDeleteTrip = (trip) => {
+    setTripToDelete(trip);
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteTrip = async () => {
+    if (!tripToDelete) return;
+
+    try {
+      const res = await fetch(`${API_BASE}/api/trips/${tripToDelete.id}`, {
+        method: "DELETE",
+        headers: {
+          ...authHeaders(),
+        },
+      });
+
+      const data = await res.json().catch(() => null);
+
+      if (!res.ok) {
+        setFormError(data?.message || "Failed to delete trip.");
+        return;
+      }
+
+      setTrips((prev) => prev.filter((t) => t.id !== tripToDelete.id));
+
+      // close view modal if it was open for this trip
+      if (activeTrip?.id === tripToDelete.id) {
+        setShowViewTrip(false);
+        setActiveTrip(null);
+      }
+
+      setShowDeleteConfirm(false);
+      setTripToDelete(null);
+    } catch (err) {
+      console.error(err);
+      setFormError("Server not reachable (is backend running on :4000?)");
+    }
+  };
+
 
   return (
     <div className="main-page">
@@ -182,7 +394,6 @@ export default function MainPage() {
           <h1 className="main-title">Your Adventures</h1>
 
           <div className="main-grid">
-            {/* render trips from state instead of demoTrips */}
             {trips.map((t) => (
               <article key={t.id} className="trip-card">
                 <div className="trip-imageWrap">
@@ -215,11 +426,7 @@ export default function MainPage() {
                       {t.location}
                     </div>
 
-                    <button
-                      className="trip-view"
-                      type="button"
-                      onClick={() => openViewTrip(t)}
-                    >
+                    <button className="trip-view" type="button" onClick={() => openViewTrip(t)}>
                       View
                     </button>
                   </div>
@@ -227,7 +434,6 @@ export default function MainPage() {
               </article>
             ))}
 
-            {/* + opens modal */}
             <button className="add-card" type="button" onClick={openAddTrip}>
               <span className="add-plus" aria-hidden="true">
                 +
@@ -255,8 +461,8 @@ export default function MainPage() {
           <div className="footer-brand">
             <h3>Adventure GO</h3>
             <p>
-              Where every journey becomes a chapter in your story. Record your
-              adventures and revisit the moments that matter.
+              Where every journey becomes a chapter in your story. Record your adventures and
+              revisit the moments that matter.
             </p>
             <p className="footer-copy">©2025 Adventure Go. All rights reserved.</p>
           </div>
@@ -281,25 +487,22 @@ export default function MainPage() {
         </div>
       </footer>
 
-      {/** modal */}
-      {showAddTrip && (
+      {/* =========================
+          ADD / EDIT TRIP MODAL
+         ========================= */}
+      {showTripForm && (
         <div
           className="modal-overlay"
           role="dialog"
           aria-modal="true"
-          onMouseDown={() => setShowAddTrip(false)}
+          onMouseDown={() => setShowTripForm(false)}
         >
           <div className="modal-card modal-addTrip" onMouseDown={(e) => e.stopPropagation()}>
             <div className="modal-topRow">
-              <button
-                className="modal-back"
-                type="button"
-                onClick={() => setShowAddTrip(false)}
-                aria-label="Close"
-              >
+              <button className="modal-back" type="button" onClick={() => setShowTripForm(false)}>
                 ←
               </button>
-              <div className="modal-title">Add Trip</div>
+              <div className="modal-title">{editingTripId ? "Edit Trip" : "Add Trip"}</div>
               <div className="modal-spacer" />
             </div>
 
@@ -308,39 +511,49 @@ export default function MainPage() {
                 <input
                   type="file"
                   accept="image/*"
-                  onChange={(e) => setCoverFile(e.target.files?.[0] || null)}
+                  onChange={(e) => {
+                    const f = e.target.files?.[0] || null;
+                    setCoverFile(f);
+                    if (f) setCoverPreview(URL.createObjectURL(f));
+                  }}
                   style={{ display: "none" }}
                 />
-                <div className="cover-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
-                    <path
-                      d="M12 3v12"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                    />
-                    <path
-                      d="M7 8l5-5 5 5"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M5 21h14"
-                      stroke="currentColor"
-                      strokeWidth="1.7"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </div>
-                <div className="cover-text">
-                  {coverFile ? coverFile.name : "Upload a cover photo"}
-                </div>
+
+                {/* show preview if we have one */}
+                {coverPreview ? (
+                  <img className="cover-preview" src={coverPreview} alt="" />
+                ) : (
+                  <>
+                    <div className="cover-icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="22" height="22" fill="none">
+                        <path
+                          d="M12 3v12"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                        />
+                        <path
+                          d="M7 8l5-5 5 5"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                        <path
+                          d="M5 21h14"
+                          stroke="currentColor"
+                          strokeWidth="1.7"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    </div>
+                    <div className="cover-text">Upload a cover photo</div>
+                  </>
+                )}
               </label>
             </div>
 
-            <form className="addTrip-form" onSubmit={createTrip}>
+            <form className="addTrip-form" onSubmit={submitTripForm}>
               {formError && <div className="modal-error">{formError}</div>}
 
               <div className="addTrip-row3">
@@ -418,7 +631,7 @@ export default function MainPage() {
 
               <div className="addTrip-actions">
                 <button className="addTrip-create" type="submit">
-                  Create
+                  {editingTripId ? "Save" : "Create"}
                 </button>
               </div>
             </form>
@@ -426,7 +639,9 @@ export default function MainPage() {
         </div>
       )}
 
-      
+      {/* =========================
+          VIEW TRIP MODAL
+         ========================= */}
       {showViewTrip && activeTrip && (
         <div
           className="modal-overlay"
@@ -435,17 +650,33 @@ export default function MainPage() {
           onMouseDown={() => setShowViewTrip(false)}
         >
           <div className="modal-card modal-viewTrip" onMouseDown={(e) => e.stopPropagation()}>
-            <div className="modal-topRow">
-              <button
-                className="modal-back"
-                type="button"
-                onClick={() => setShowViewTrip(false)}
-                aria-label="Close"
-              >
+            <div className="modal-topRow viewTopRow">
+              <button className="modal-back" type="button" onClick={() => setShowViewTrip(false)}>
                 ←
               </button>
+
               <div className="modal-title">{activeTrip.title}</div>
-              <div className="modal-spacer" />
+
+              {/* right actions (Delete / Edit) */}
+              <div className="viewTrip-actionsTop">
+                <button
+                  type="button"
+                  className="viewTrip-danger"
+                  onClick={() => askDeleteTrip(activeTrip)}
+                >
+                  Delete Trip
+                </button>
+                <button
+                  type="button"
+                  className="viewTrip-ghost"
+                  onClick={() => {
+                    setShowViewTrip(false);
+                    openEditTrip(activeTrip);
+                  }}
+                >
+                  Edit Trip
+                </button>
+              </div>
             </div>
 
             <div className="viewTrip-hero">
@@ -462,13 +693,41 @@ export default function MainPage() {
 
             <div className="viewTrip-timelineTitle">Timeline</div>
 
-            {/* day buttons */}
             <div className="viewTrip-days">
               {daysBetweenInclusive(activeTrip.arrivalDate, activeTrip.departureDate).map((d) => (
                 <button key={d.toISOString()} className="day-chip" type="button">
                   {d.toLocaleDateString(undefined, { day: "numeric" })}
                 </button>
               ))}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* =========================
+          DELETE CONFIRM MODAL
+         ========================= */}
+      {showDeleteConfirm && (
+        <div
+          className="modal-overlay"
+          role="dialog"
+          aria-modal="true"
+          onMouseDown={() => setShowDeleteConfirm(false)}
+        >
+          <div className="confirm-card" onMouseDown={(e) => e.stopPropagation()}>
+            <h2>Are you sure you want to delete this trip?</h2>
+
+            <div className="confirm-actions">
+              <button className="confirm-yes" type="button" onClick={confirmDeleteTrip}>
+                Yes
+              </button>
+              <button
+                className="confirm-no"
+                type="button"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                No
+              </button>
             </div>
           </div>
         </div>
