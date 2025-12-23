@@ -677,14 +677,19 @@ export default function MainPage() {
     setShowSpotDetail(true);
   };
 
-  const onEditExistingSpot = (spot) => {
-    setSpotDraft(spot);
-    setSpotNote(spot?.note || "");
-    setSpotPhotoFile(null);
-    setSpotPhotoPreview(spot?.photo || "");
-    setEditingSpotId(spot?.id || null);
-    setShowSpotDetail(true);
-  };
+  
+const onEditExistingSpot = (spot) => {
+  const stableId = spot?.id || spot?._id || `spot_${crypto.randomUUID()}`;
+
+  setSpotDraft({ ...spot, id: stableId });
+  setSpotNote(spot?.note || "");
+  setSpotPhotoFile(null);
+  setSpotPhotoPreview(spot?.photo || "");
+  setEditingSpotId(stableId);
+  
+  setShowSpotDetail(true);
+};
+
 
   const closeSpotDetail = () => {
     setShowSpotDetail(false);
@@ -722,15 +727,57 @@ export default function MainPage() {
     closeSpotDetail();
   };
 
-  // remove spot 
-  const removeSpot = () => {
-    if (!editingSpotId) return;
-    const ok = window.confirm("Remove this spot?");
-    if (!ok) return;
+ 
+// Ctrl+F: "const removeSpot ="
+const removeSpot = async () => {
+  const ok = window.confirm("Remove this spot?");
+  if (!ok) return;
 
-    setStepSpots((prev) => prev.filter((s) => s.id !== editingSpotId));
-    closeSpotDetail();
-  };
+  if (!activeTrip?.id) return setStepError("No active trip selected.");
+  if (!stepDate) return setStepError("Missing step date.");
+
+  // use editingSpotId OR spotDraft.id
+  const spotId = editingSpotId || spotDraft?.id || spotDraft?._id;
+  if (!spotId) return setStepError("Missing spot id.");
+
+  const nextSpots = (stepSpots || []).filter((s) => (s.id || s._id) !== spotId);
+
+  setStepSpots(nextSpots);
+  closeSpotDetail();
+
+  // persist by re-saving the step (your current logic is fine below)
+  try {
+    const res = await fetch(`${API_BASE}/api/trips/${activeTrip.id}/steps`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        date: stepDate,
+        title: stepName.trim(),
+        overview: stepOverview.trim(),
+        photos: [...(stepExistingPhotos || [])],
+        spots: nextSpots,
+      }),
+    });
+
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.message || "Failed to persist spot removal");
+
+    const updatedApiTrip = data?.trip ?? data;
+    const updatedUiTrip = toUiTrip(updatedApiTrip);
+
+    setTrips((prev) => prev.map((t) => (t.id === updatedUiTrip.id ? updatedUiTrip : t)));
+    setActiveTrip(updatedUiTrip);
+  } catch (err) {
+    console.error(err);
+    setStepError(err?.message || "Failed to persist spot removal");
+  }
+};
+
+
+
 
   const makeHighlightQuote = (spotName) => `“${spotName} was one of the best moments of the day.”`;
 
@@ -1420,17 +1467,17 @@ export default function MainPage() {
                     placeholder="How was your experience?"
                   />
 
-                  <div className="spotDetail-actions">
-                    {editingSpotId ? (
-                      <button className="spotDetail-remove" type="button" onClick={removeSpot}>
-                        Remove spot
-                      </button>
-                    ) : null}
+                 <div className="spotDetail-actions">
+                  <button className="spotDetail-remove" type="button" onClick={removeSpot}>
+                    Remove spot
+                  </button>
 
-                    <button className="spotDetail-save" type="button" onClick={saveSpotDetail}>
-                      Save changes
-                    </button>
+                  <button className="spotDetail-save" type="button" onClick={saveSpotDetail}>
+                    Save changes
+                  </button>
                   </div>
+
+
                 </div>
               </div>
             </div>

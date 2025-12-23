@@ -1305,3 +1305,21 @@
   cursor: pointer;
   padding: 0 22px;
 }
+.spotDetail-actions{
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.spotDetail-remove{
+  height: 44px;
+  border-radius: 999px;
+  border: none;
+  background: #111;
+  color: #fff;
+  font-weight: 900;
+  cursor: pointer;
+  padding: 0 22px;
+}

@@ -101,7 +101,9 @@ router.post("/:id/steps", auth, async (req, res) => {
       return res.status(400).json({ message: "date and title are required" });
     }
 
-    const trip = await Trip.findOne({ _id: id, user: req.userId });
+    
+    const trip = await Trip.findOne({ _id: id, userId: req.user.userId });
+
     if (!trip) return res.status(404).json({ message: "Trip not found" });
 
     // Replace any existing step for that date 
